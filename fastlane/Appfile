@@ -1,0 +1,23 @@
+apple_dev_portal_id "<apple_dev_program_email@server.com>"
+itunes_connect_id "<itunes_connect_email@server.com>"
+
+team_name "<TEAM_NAME>"
+team_id "<TEAM_ID>"
+
+for_platform :ios do
+  for_lane :prebuild_beta do
+      app_identifier "com.company.myapp.staging"
+  end
+
+  for_lane :beta do
+    app_identifier "com.company.myapp.staging"
+  end
+
+  for_lane :prebuild_production do
+      app_identifier "com.company.myapp"
+  end
+
+  for_lane :production do
+    app_identifier "com.company.myapp"
+  end
+end

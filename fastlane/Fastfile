@@ -1,0 +1,136 @@
+require './libs/utils.rb'
+
+fastlane_version '1.63.1'
+
+default_platform :ios
+
+platform :ios do  
+  before_all do
+    ENV["SLACK_URL"] = "https://hooks.slack.com/services/#####/#####/#########"
+  end
+
+  after_all do |lane|
+  end
+
+  error do |lane, exception|
+    reset_git_repo(force: true)
+    slack(
+      message: "Failed to build #{ENV['XL_TARGET']}: #{exception.message}",
+      success: false
+    )
+  end
+
+  # Custom lanes
+
+  desc 'Do basic setup, as installing cocoapods dependencies and fetching profiles, before start building.'
+  lane :prebuild do
+    ensure_git_status_clean
+
+    plist_file = ENV['XL_TARGET_PLIST_FILE']
+
+    increase_build_number(plist_file)
+
+    cocoapods
+    sigh(output_path: '/Library/Developer/XcodeServer/ProvisioningProfiles', skip_install: true)
+  end
+
+  desc 'Required tasks before build the staging app.'
+  lane :prebuild_beta do
+    ENV['XL_TARGET_PLIST_FILE'] = './MyAppStaging-Info.plist'
+    prebuild
+  end
+
+  desc 'Required tasks before build the production app.'
+  lane :prebuild_production do
+    ENV['XL_TARGET_PLIST_FILE'] = './MyApp-Info.plist'
+    prebuild
+  end
+
+  desc 'Submit a new Beta Build to Apple iTunes Connect'
+  lane :build do
+    branch = ENV['XL_BRANCH']
+    deliver_flag = ENV['XL_DELIVER_FLAG'].to_i
+    plist_file = ENV['XL_TARGET_PLIST_FILE']
+    tag_base_path = ENV['XL_TAG_BASE_PATH']
+    tag_base_path = "#{tag_base_path}/" unless tag_base_path.nil? || tag_base_path == ''
+    tag_link = ENV['XL_TAG_LINK']
+    target = ENV['XL_TARGET']
+
+    build_number = get_info_plist_value(
+      path: plist_file,
+      key: 'CFBundleVersion',
+    )
+    version_number = get_info_plist_value(
+      path: plist_file,
+      key: 'CFBundleShortVersionString',
+    )
+
+    ENV['XL_VERSION_NUMBER'] = "#{version_number}"
+    ENV['XL_BUILD_NUMBER'] = "#{build_number}"
+
+    tag_path = "#{tag_base_path}release_#{version_number}_#{build_number}"
+    tag_link = "#{tag_link}#{tag_path}"
+    update_changelog({
+      name: tag_path,
+      version: version_number,
+      build: build_number,
+      link: tag_link
+    })
+
+    ENV['XL_TAG_LINK'] = "#{tag_link}"
+    ENV['XL_TAG_PATH'] = "#{tag_path}"
+
+    sh "git config user.name 'CI Builder'"
+    sh "git config user.email 'builder@server.com'"
+
+    git_commit(
+      path: ["./CHANGELOG.md", plist_file],
+      message: "Version bump to #{version_number} (#{build_number}) by CI Builder"
+    )
+
+    if deliver_flag != 0
+      ipa_folder = "#{ENV['XCS_DERIVED_DATA_DIR']}/deploy/#{version_number}.#{build_number}/"
+      ipa_path = "#{ipa_folder}/#{target}.ipa"
+      sh "mkdir -p #{ipa_folder}"
+      sh "xcrun xcodebuild -exportArchive -archivePath \"#{ENV['XCS_ARCHIVE']}\" -exportPath \"#{ipa_path}\" -IDEPostProgressNotifications=YES -DVTAllowServerCertificates=YES -DVTSigningCertificateSourceLogLevel=3 -DVTSigningCertificateManagerLogLevel=3 -DTDKProvisioningProfileExtraSearchPaths=/Library/Developer/XcodeServer/ProvisioningProfiles -exportOptionsPlist './ExportOptions.plist'"
+
+      deliver(
+        force: true,
+        ipa: ipa_path
+      )
+    end
+
+    add_git_tag(tag: tag_path)
+
+    push_to_git_remote(local_branch: branch)
+
+    push_git_tags
+
+    slack(
+      message: "#{ENV['XL_TARGET']} #{ENV['XL_VERSION_NUMBER']}.#{ENV['XL_BUILD_NUMBER']} successfully released and tagged to #{ENV['XL_TAG_LINK']}",
+    )
+  end
+
+  desc "Deploy a new version of MyApp Staging to the App Store"
+  lane :beta do
+    ENV['XL_BRANCH'] = current_branch
+    ENV['XL_DELIVER_FLAG'] ||= '1'
+    ENV['XL_TAG_BASE_PATH'] = 'beta'
+    ENV['XL_TARGET_PLIST_FILE'] = './MyApp Staging-Info.plist'
+    ENV['XL_TARGET'] = 'MyApp Staging'
+    ENV['XL_TAG_LINK'] = 'https://github.com/xmartlabs/MyApp/releases/tag/'
+
+    build
+  end
+
+  desc "Deploy a new version of MyApp to the App Store"
+  lane :production do
+    ENV['XL_BRANCH'] = current_branch
+    ENV['XL_DELIVER_FLAG'] ||= '1'
+    ENV['XL_TARGET_PLIST_FILE'] = './MyApp-Info.plist'
+    ENV['XL_TARGET'] = 'MyApp'
+    ENV['XL_TAG_LINK'] = 'https://github.com/company/MyApp/releases/tag/'
+
+    build
+  end
+end
