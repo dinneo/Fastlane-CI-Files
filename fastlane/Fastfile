@@ -4,9 +4,14 @@ fastlane_version '1.63.1'
 
 default_platform :ios
 
+$production_plist = './MyApp-Info.plist'
+$staging_plist = './MyApp Staging-Info.plist'
+$tag_link = 'https://github.com/xmartlabs/MyApp/releases/tag/'
+
 platform :ios do  
   before_all do
-    ENV["SLACK_URL"] = "https://hooks.slack.com/services/#####/#####/#########"
+    ENV["SLACK_URL"] ||= "https://hooks.slack.com/services/#####/#####/#########"
+    ENV['XL_SLACK_CHANNEL'] ||= '#internal_builds'
   end
 
   after_all do |lane|
@@ -16,6 +21,7 @@ platform :ios do
     reset_git_repo(force: true)
     slack(
       message: "Failed to build #{ENV['XL_TARGET']}: #{exception.message}",
+      channel: ENV['XL_SLACK_CHANNEL'],
       success: false
     )
   end
@@ -28,7 +34,11 @@ platform :ios do
 
     plist_file = ENV['XL_TARGET_PLIST_FILE']
 
-    increase_build_number(plist_file)
+    increase_build_number_flag = ENV['XL_INCREASE_BUILD_NUMBER'].to_i
+    if increase_build_number_flag == 1
+      plist_file = ENV['XL_TARGET_PLIST_FILE']
+      build_number = increase_build_number(plist_file)
+    end
 
     cocoapods
     sigh(output_path: '/Library/Developer/XcodeServer/ProvisioningProfiles', skip_install: true)
@@ -36,13 +46,15 @@ platform :ios do
 
   desc 'Required tasks before build the staging app.'
   lane :prebuild_beta do
-    ENV['XL_TARGET_PLIST_FILE'] = './MyAppStaging-Info.plist'
+    ENV['XL_INCREASE_BUILD_NUMBER'] ||= '1'
+    ENV['XL_TARGET_PLIST_FILE'] = $staging_plist
     prebuild
   end
 
   desc 'Required tasks before build the production app.'
   lane :prebuild_production do
-    ENV['XL_TARGET_PLIST_FILE'] = './MyApp-Info.plist'
+    ENV['XL_INCREASE_BUILD_NUMBER'] ||= '1'
+    ENV['XL_TARGET_PLIST_FILE'] = $production_plist
     prebuild
   end
 
@@ -108,6 +120,7 @@ platform :ios do
 
     slack(
       message: "#{ENV['XL_TARGET']} #{ENV['XL_VERSION_NUMBER']}.#{ENV['XL_BUILD_NUMBER']} successfully released and tagged to #{ENV['XL_TAG_LINK']}",
+      channel: ENV['XL_SLACK_CHANNEL']
     )
   end
 
@@ -116,9 +129,9 @@ platform :ios do
     ENV['XL_BRANCH'] = current_branch
     ENV['XL_DELIVER_FLAG'] ||= '1'
     ENV['XL_TAG_BASE_PATH'] = 'beta'
-    ENV['XL_TARGET_PLIST_FILE'] = './MyApp Staging-Info.plist'
+    ENV['XL_TARGET_PLIST_FILE'] = $staging_plist
     ENV['XL_TARGET'] = 'MyApp Staging'
-    ENV['XL_TAG_LINK'] = 'https://github.com/xmartlabs/MyApp/releases/tag/'
+    ENV['XL_TAG_LINK'] = $tag_link
 
     build
   end
@@ -127,9 +140,9 @@ platform :ios do
   lane :production do
     ENV['XL_BRANCH'] = current_branch
     ENV['XL_DELIVER_FLAG'] ||= '1'
-    ENV['XL_TARGET_PLIST_FILE'] = './MyApp-Info.plist'
+    ENV['XL_TARGET_PLIST_FILE'] = $production_plist
     ENV['XL_TARGET'] = 'MyApp'
-    ENV['XL_TAG_LINK'] = 'https://github.com/company/MyApp/releases/tag/'
+    ENV['XL_TAG_LINK'] = $tag_link
 
     build
   end
